@@ -7,11 +7,12 @@ This repo serves as a brief guide to using the PostgreSQL database as well as so
 To make the most of this guide, you will need: 
 
 - Docker Installed
-- Node v8 or higher
 - Git
 - Homebrew (brew install ...)
 - Text editor or IDE of your choice
 - Terminal
+
+ This also assumes you are on a Mac so you can use Homebrew but the instructions are the same if you get `psql` installed.
 
 ### Running PostgreSQL
 
@@ -328,10 +329,10 @@ postgres=# select count(*) from techtalk.data where my_bool = true;
 Time: 102.099 ms
 ```
 
-Sometimes the query planner will decide not to use an index if it won't benefit execution time. You can `"force"` PostgreSQL to use an index for testing:
+Sometimes the query planner will decide not to use an index if it won't benefit execution time greatly. You can `"force"` PostgreSQL to use an index for testing:
 
 ```
-set enable_seqscan=false
+set enable_seqscan=false;
 ```
 
 ```
@@ -352,4 +353,3 @@ postgres=# select count(*) from techtalk.data where my_bool = true;
 Time: 110.735 ms
 
 ```
-
