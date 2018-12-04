@@ -104,7 +104,7 @@ To cancel a query, use `CTRL-C`.
 **Running a Query**
 For short one-line queries, it is easy to type them directly into the prompt:
 
-```
+```sql
 postgres=# SELECT now();
               now
 -------------------------------
@@ -138,7 +138,7 @@ Sometimes we need queries to run in a given order and we need to undo any change
 
 To start a transaction, issue the following on the psql prompt:
 
-```
+```sql
 postgres=# START TRANSACTION;
 START TRANSACTION
 postgres=#
@@ -171,7 +171,7 @@ The example SQL file will create a new table with one million randomly generated
 
 To examine the different data types, we have the following:
 
-```
+```sql
 postgres=# \d techtalk.data
                   Table "techtalk.data"
     Column    |  Type   | Collation | Nullable | Default
@@ -192,7 +192,7 @@ Lets turn on timing and run some queries:
 
 Some data types are faster to retrieve than others in a query. For example, in the following queries we select just `heads` or `tails` and compare the timing with filtering on a boolean.
 
-```
+```sql
 postgres=# \timing
 Timing is on.
 postgres=#
@@ -233,7 +233,7 @@ Time: 116.608 ms
 
 Lets investigate the planning and execution of the queries:
 
-```
+```sql
 postgres=# explain analyze select count(*) from techtalk.data where my_bool = true;
                                                      QUERY PLAN
 ---------------------------------------------------------------------------------------------------------------------
@@ -248,7 +248,7 @@ postgres=# explain analyze select count(*) from techtalk.data where my_bool = tr
 Time: 7736.357 ms (00:07.736)
 ```
 
-```
+```sql
 postgres=# explain analyze select count(*) from techtalk.data where coin_flip = 'heads';
                                                      QUERY PLAN
 ---------------------------------------------------------------------------------------------------------------------
@@ -305,7 +305,7 @@ Hash indexes at times can provide faster lookups than B-Tree indexes, and can bo
 
 ### Index all the things
 
-```
+```sql
 postgres=# create index on techtalk.data using btree (coin_flip);
 CREATE INDEX
 
@@ -331,11 +331,11 @@ Time: 102.099 ms
 
 Sometimes the query planner will decide not to use an index if it won't benefit execution time greatly. You can `"force"` PostgreSQL to use an index for testing:
 
-```
+```sql
 set enable_seqscan=false;
 ```
 
-```
+```sql
 postgres=# select count(*) from techtalk.data where coin_flip = 'heads';
  count
 --------
@@ -352,4 +352,98 @@ postgres=# select count(*) from techtalk.data where my_bool = true;
 
 Time: 110.735 ms
 
+```sql
+Using the index in the above queries doesn't seem to have helped much, but there is something else we can do.
+When a large number of changes have been made to the database such as a big import or adding indexes, it is important to `VACUUM`:
+
+```sql
+set enable_seqscan=true; --- reset to defaults
+
+postgres=# vacuum;
+VACUUM
+Time: 171.848 ms
+postgres=# select count(*) from techtalk.data where coin_flip = 'heads';
+ count
+--------
+ 499700
+(1 row)
+
+Time: 57.829 ms
+```
+
+```sql
+postgres=# explain analyze select count(*) from techtalk.data where coin_flip = 'heads';
+                                                                     QUERY PLAN
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=15461.08..15461.09 rows=1 width=8) (actual time=7421.257..7421.264 rows=1 loops=1)
+   ->  Index Only Scan using data_coin_flip_idx on data  (cost=0.42..14213.50 rows=499033 width=0) (actual time=0.083..3730.423 rows=499700 loops=1)
+         Index Cond: (coin_flip = 'heads'::text)
+         Heap Fetches: 0
+ Planning time: 0.117 ms
+ Execution time: 7421.370 ms
+(6 rows)
+
+```
+
+With a clean database, the query time is now halved and the index is used.
+
+### Adding Multi-Column Indexes
+
+For more complex queries it can be useful to combine multiple columns into a single index. These will take more space, but the performance trade off is often worth it. Take the following query as an example. We want all `lucky_number`'s  greater than 500 but with a `coin_flip` of heads.
+
+```sql
+postgres=# select count(*) from techtalk.data where lucky_number > 500 and coin_flip = 'heads';
+ count
+--------
+ 249398
+(1 row)
+
+Time: 140.936 ms
+```
+
+Since the two columns are present in the where clause, we can combine them into a single index like so:
+
+```sql
+postgres=# create index lucky on techtalk.data using btree (lucky_number, coin_flip);
+CREATE INDEX
+Time: 1743.761 ms (00:01.744)
+```
+
+Now when we run the query, we get a 2x speed bump!
+
+```sql
+postgres=# select count(*) from techtalk.data where lucky_number > 500 and coin_flip = 'heads';
+ count
+--------
+ 249398
+(1 row)
+
+Time: 62.507 ms
+```
+
+Looking at the query plan and execution we can see that the index has greatly reduced the time spent searching and filtering the rows:
+
+```sql
+postgres=# explain analyze select count(*) from techtalk.data where lucky_number > 500 and coin_flip = 'heads';
+                                                               QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=15911.30..15911.31 rows=1 width=8) (actual time=3676.661..3676.668 rows=1 loops=1)
+   ->  Index Only Scan using lucky on data  (cost=0.42..15284.13 rows=250866 width=0) (actual time=0.068..1846.307 rows=249398 loops=1)
+         Index Cond: ((lucky_number > 500) AND (coin_flip = 'heads'::text))
+         Heap Fetches: 0
+ Planning time: 0.158 ms
+ Execution time: 3676.771 ms
+(6 rows)
+```
+
+Finally, if we remove the most costly part of the query (the aggregation), the query time drops once again down to the 2-5 millisecond range:
+
+```sql
+postgres=# select max(lucky_number) from techtalk.data where lucky_number > 500 and coin_flip = 'heads';
+ max
+-----
+ 999
+(1 row)
+
+Time: 2.313 ms
 ```
